@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Beer EBC Color Detector</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #8B4513;
+            margin-bottom: 30px;
+        }
+        .upload-section {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            cursor: pointer;
+            margin: 10px;
+        }
+        .file-input {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        .btn {
+            background: #8B4513;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px;
+            transition: background-color 0.3s;
+        }
+        .btn:hover {
+            background: #A0522D;
+        }
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #camera-section {
+            text-align: center;
+            margin: 20px 0;
+        }
+        #video {
+            max-width: 100%;
+            border-radius: 5px;
+            display: none;
+        }
+        #canvas {
+            display: none;
+        }
+        .image-preview {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 5px;
+            margin: 20px 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .results {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 5px solid #8B4513;
+        }
+        .ebc-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #8B4513;
+        }
+        .color-name {
+            font-size: 20px;
+            margin: 10px 0;
+        }
+        .confidence {
+            color: #666;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🍺 Beer EBC Color Detector</h1>
+        
+        <div class="upload-section">
+            <div class="file-input-wrapper">
+                <input type="file" id="file-input" class="file-input" accept="image/*">
+                <button class="btn">📁 Upload Image</button>
+            </div>
+            <button id="camera-btn" class="btn">📷 Use Camera</button>
+        </div>
+
+        <div id="camera-section">
+            <video id="video" autoplay></video>
+            <br>
+            <button id="capture-btn" class="btn" style="display: none;">📸 Capture Photo</button>
+            <button id="stop-camera-btn" class="btn" style="display: none;">❌ Stop Camera</button>
+        </div>
+
+        <canvas id="canvas"></canvas>
+
+        <div id="image-container"></div>
+        <div id="loading" class="loading" style="display: none;">
+            Analyzing beer color...
+        </div>
+        <div id="error" class="error" style="display: none;"></div>
+        <div id="results" class="results" style="display: none;">
+            <div class="ebc-value">EBC: <span id="ebc-value"></span></div>
+            <div class="color-name">Color: <span id="color-name"></span></div>
+            <div class="confidence">Confidence: <span id="confidence"></span>%</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { detect_ebc_from_image_data } from './pkg/beer_ebc_detector.js';
+
+        let stream = null;
+
+        async function run() {
+            await init();
+
+            const fileInput = document.getElementById('file-input');
+            const cameraBtn = document.getElementById('camera-btn');
+            const captureBtn = document.getElementById('capture-btn');
+            const stopCameraBtn = document.getElementById('stop-camera-btn');
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            fileInput.addEventListener('change', handleFileUpload);
+            cameraBtn.addEventListener('click', startCamera);
+            captureBtn.addEventListener('click', capturePhoto);
+            stopCameraBtn.addEventListener('click', stopCamera);
+
+            async function handleFileUpload(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                try {
+                    showLoading();
+                    hideError();
+                    
+                    const arrayBuffer = await file.arrayBuffer();
+                    const uint8Array = new Uint8Array(arrayBuffer);
+                    
+                    displayImage(file);
+                    await analyzeImage(uint8Array);
+                } catch (error) {
+                    showError('Error processing file: ' + error.message);
+                } finally {
+                    hideLoading();
+                }
+            }
+
+            async function startCamera() {
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: 'environment' } 
+                    });
+                    video.srcObject = stream;
+                    video.style.display = 'block';
+                    captureBtn.style.display = 'inline-block';
+                    stopCameraBtn.style.display = 'inline-block';
+                    cameraBtn.style.display = 'none';
+                } catch (error) {
+                    showError('Error accessing camera: ' + error.message);
+                }
+            }
+
+            function stopCamera() {
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    stream = null;
+                }
+                video.style.display = 'none';
+                captureBtn.style.display = 'none';
+                stopCameraBtn.style.display = 'none';
+                cameraBtn.style.display = 'inline-block';
+            }
+
+            async function capturePhoto() {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.drawImage(video, 0, 0);
+                
+                try {
+                    showLoading();
+                    hideError();
+                    
+                    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+                    displayCapturedImage(imageData);
+                    
+                    const response = await fetch(imageData);
+                    const arrayBuffer = await response.arrayBuffer();
+                    const uint8Array = new Uint8Array(arrayBuffer);
+                    
+                    await analyzeImage(uint8Array);
+                } catch (error) {
+                    showError('Error processing captured image: ' + error.message);
+                } finally {
+                    hideLoading();
+                }
+            }
+
+            function displayImage(file) {
+                const container = document.getElementById('image-container');
+                const img = document.createElement('img');
+                img.src = URL.createObjectURL(file);
+                img.className = 'image-preview';
+                container.innerHTML = '';
+                container.appendChild(img);
+            }
+
+            function displayCapturedImage(dataUrl) {
+                const container = document.getElementById('image-container');
+                const img = document.createElement('img');
+                img.src = dataUrl;
+                img.className = 'image-preview';
+                container.innerHTML = '';
+                container.appendChild(img);
+            }
+
+            async function analyzeImage(imageData) {
+                try {
+                    const result = detect_ebc_from_image_data(imageData);
+                    displayResults(result);
+                } catch (error) {
+                    throw new Error('Failed to analyze image: ' + error.message);
+                }
+            }
+
+            function displayResults(result) {
+                document.getElementById('ebc-value').textContent = result.ebc_value.toFixed(1);
+                document.getElementById('color-name').textContent = result.color_name;
+                document.getElementById('confidence').textContent = (result.confidence * 100).toFixed(1);
+                document.getElementById('results').style.display = 'block';
+            }
+
+            function showLoading() {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('results').style.display = 'none';
+            }
+
+            function hideLoading() {
+                document.getElementById('loading').style.display = 'none';
+            }
+
+            function showError(message) {
+                document.getElementById('error').textContent = message;
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('results').style.display = 'none';
+            }
+
+            function hideError() {
+                document.getElementById('error').style.display = 'none';
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>
